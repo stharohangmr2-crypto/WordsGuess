@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Word Chain Duel</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
+<style>
+:root{--bg:#f6f4ee;--card:#fff;--ink:#1d1c1a;--mut:#77736a;--acc:#4f46e5;--accT:#fff;--ok:#16a34a;--bad:#dc2626;--line:#e4e0d6}
+@media (prefers-color-scheme:dark){:root{--bg:#141413;--card:#201f1d;--ink:#f1efe8;--mut:#9a958a;--acc:#818cf8;--accT:#11101a;--line:#34322e}}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:460px;margin:0 auto;padding:20px 16px 40px}
+h1{font-size:26px;margin:8px 0 2px;letter-spacing:-.5px}
+.sub{color:var(--mut);margin:0 0 20px;font-size:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:14px}
+label{font-size:12px;color:var(--mut);display:block;margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em}
+input{width:100%;font:inherit;font-size:17px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--ink);outline:none}
+input:focus{border-color:var(--acc)}
+button{font:inherit;font-weight:600;padding:13px 16px;border-radius:12px;border:0;background:var(--acc);color:var(--accT);cursor:pointer;width:100%}
+button.alt{background:transparent;color:var(--ink);border:1px solid var(--line)}
+button:disabled{opacity:.5}
+.row{display:flex;gap:10px}.row>*{flex:1}
+.gap{height:10px}
+.code{font-size:38px;font-weight:800;letter-spacing:.18em;text-align:center;text-transform:uppercase}
+.pl{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}
+.pl:last-child{border:0}
+.tag{font-size:12px;padding:3px 9px;border-radius:99px;background:var(--line);color:var(--mut)}
+.tag.on{background:var(--ok);color:#fff}
+.letter{font-size:96px;line-height:1;font-weight:800;text-align:center;color:var(--acc);text-transform:uppercase}
+.turn{text-align:center;font-weight:600;margin:6px 0}
+.bar{height:8px;background:var(--line);border-radius:9px;overflow:hidden;margin:10px 0}
+.bar i{display:block;height:100%;background:var(--acc);width:100%}
+.err{color:var(--bad);font-size:14px;min-height:20px;text-align:center;margin-top:8px}
+.chain{display:flex;flex-wrap:wrap;gap:6px}
+.w{padding:5px 11px;border-radius:99px;background:var(--bg);border:1px solid var(--line);font-size:14px}
+.w.a{border-color:var(--acc)}
+.mut{color:var(--mut);font-size:13px;text-align:center}
+.big{font-size:22px;font-weight:700;text-align:center;margin:6px 0 4px}
+</style>
+</head>
+<body>
+<main id="app"></main>
+<script>
+(function(){
+var TURN=25, LETTERS="abcdefghilmnoprstw", CH="abcdefghjkmnpqrstuvwxyz23456789", PFX="wcduel-";
+var app=document.getElementById("app");
+var PCFG={debug:0,config:{iceCandidatePoolSize:4,iceServers:[
+{urls:"stun:stun.l.google.com:19302"},{urls:"stun:global.stun.twilio.com:3478"},
+{urls:["turn:openrelay.metered.ca:80","turn:openrelay.metered.ca:443","turn:openrelay.metered.ca:443?transport=tcp","turns:openrelay.metered.ca:443?transport=tcp"],username:"openrelayproject",credential:"openrelayproject"}]}};
+var wl=null;
+var peer=null, conn=null, isHost=false, H=null, S=null, myIdx=0, code="", view="home", msg="", rcv=0, tick=null, name="";
+try{name=localStorage.getItem("wc_name")||""}catch(e){}
+
+function el(t,c,x){var e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e}
+function btn(t,c,f){var b=el("button",c,t);b.onclick=f;return b}
+function rc(){var s="";for(var i=0;i<5;i++)s+=CH[Math.floor(Math.random()*CH.length)];return s}
+function clean(n){return String(n||"").replace(/[^\w \-]/g,"").trim().slice(0,14)||"Player"}
+function saveName(v){name=clean(v);try{localStorage.setItem("wc_name",name)}catch(e){}}
+
+/* ---------- views ---------- */
+function render(){
+  clearInterval(tick);app.textContent="";
+  app.appendChild(el("h1",null,"Word Chain Duel"));
+  if(view==="home")return home();
+  if(!S){app.appendChild(el("p","sub",msg||"Connecting…"));app.appendChild(btn("Cancel","alt",leave));return}
+  if(S.phase==="play")return game();
+  lob();
+}
+function home(){
+  app.appendChild(el("p","sub","Type a word that starts with the last letter of your opponent’s word."));
+  var c=el("div","card"),i=el("input");i.value=name;i.maxLength=14;i.placeholder="Enter a name";i.oninput=function(){saveName(i.value)};
+  c.append(el("label",null,"Your name"),i);app.appendChild(c);
+  var c3=el("div","card");
+  c3.appendChild(btn("Create a room","",function(){saveName(i.value);hostRoom()}));
+  c3.appendChild(el("div","gap"));
+  var r=el("div","row"),ci=el("input");ci.placeholder="CODE";ci.maxLength=5;ci.style.textTransform="uppercase";
+  var jb=btn("Join","alt",function(){var v=ci.value.trim().toLowerCase();if(v.length<5)return;saveName(i.value);joinRoom(v)});
+  jb.style.flex="0 0 90px";r.append(ci,jb);
+  c3.append(el("label",null,"Or join a friend with their code"),r);app.appendChild(c3);
+  if(msg)app.appendChild(el("div","err",msg));
+}
+function lob(){
+  app.appendChild(el("p","sub",S.phase==="over"?"Game over":"Waiting room"));
+  if(S.phase==="over"){
+    var won=S.winner===myIdx;
+    app.appendChild(el("div","big",won?"You win! 🎉":"You lost"));
+    app.appendChild(el("p","mut",(won?"Opponent ":"You ")+S.reason+". Chain: "+S.words.length+" words"));
+  }
+  var c=el("div","card");c.appendChild(el("label",null,"Room code"));c.appendChild(el("div","code",code));
+  var cp=btn("Copy code","alt",function(){try{navigator.clipboard.writeText(code.toUpperCase());cp.textContent="Copied!"}catch(e){}});
+  cp.style.marginTop="10px";c.appendChild(cp);app.appendChild(c);
+  var pc=el("div","card");
+  S.players.forEach(function(p,k){var r=el("div","pl");r.appendChild(el("span",null,p.name+(k===myIdx?" (you)":"")));r.appendChild(el("span","tag"+(p.ready?" on":""),p.ready?"Ready":"Not ready"));pc.appendChild(r)});
+  if(S.players.length<2){var w=el("div","pl");w.appendChild(el("span","mut","Waiting for another player…"));pc.appendChild(w)}
+  app.appendChild(pc);
+  var me=S.players[myIdx];
+  var rb=btn(me&&me.ready?"Not ready":"I’m ready",me&&me.ready?"alt":"",function(){send({t:"ready"})});
+  rb.disabled=S.players.length<2;app.appendChild(rb);
+  app.appendChild(el("div","gap"));app.appendChild(btn("Leave room","alt",leave));
+}
+function game(){
+  var mine=S.turn===myIdx;
+  app.appendChild(el("div","letter",S.letter));
+  app.appendChild(el("div","mut",S.words.length?"Your word must start with this letter":"First word must start with this letter"));
+  app.appendChild(el("div","turn",mine?"Your turn!":S.players[S.turn].name+"’s turn"));
+  var bar=el("div","bar"),fill=el("i");bar.appendChild(fill);app.appendChild(bar);
+  var c=el("div","card"),i=el("input");
+  i.placeholder=mine?"Type a word starting with "+S.letter.toUpperCase():"Waiting…";i.disabled=!mine||S.checking;
+  i.autocapitalize="off";i.autocomplete="off";i.spellcheck=false;
+  var sb=btn(S.checking?"Checking word…":"Submit","",go);sb.disabled=i.disabled;sb.style.marginTop="10px";
+  function go(){var v=i.value.trim();if(!v)return;i.value="";send({t:"word",w:v})}
+  i.onkeydown=function(e){if(e.key==="Enter")go()};
+  c.append(i,sb,el("div","err",S.err&&S.errFor===myIdx?S.err:(S.err?S.players[S.errFor].name+" tried an invalid word":"")));
+  app.appendChild(c);
+  if(S.notice)app.appendChild(el("div","mut",S.notice));
+  var ch=el("div","card"),box=el("div","chain");ch.appendChild(el("label",null,"Chain ("+S.words.length+")"));
+  if(!S.words.length)box.appendChild(el("span","mut","No words yet"));
+  S.words.slice().reverse().forEach(function(w,k){box.appendChild(el("span","w"+(k===0?" a":""),w))});
+  ch.appendChild(box);app.appendChild(ch);
+  if(mine&&!i.disabled)setTimeout(function(){i.focus()},50);
+  tick=setInterval(function(){var left=Math.max(0,S.secs-(Date.now()-rcv)/1000);fill.style.width=(left/TURN*100)+"%";if(left<6)fill.style.background="var(--bad)"},200);
+}
+
+/* ---------- networking (peer-to-peer, host runs the game) ---------- */
+function send(d){if(isHost)act(0,d);else if(conn&&conn.open)conn.send(d)}
+function teardown(){
+  if(H&&H.tm)clearTimeout(H.tm);H=null;
+  try{if(conn)conn.close()}catch(e){}try{if(peer)peer.destroy()}catch(e){}
+  conn=null;peer=null;
+}
+function leave(){teardown();S=null;isHost=false;view="home";msg="";render()}
+function fail(m){teardown();S=null;view="home";msg=m;render()}
+function setState(s){S=s;rcv=Date.now();render()}
+
+function hostRoom(){
+  teardown();isHost=true;myIdx=0;code=rc();S=null;view="room";msg="Creating room…";render();
+  if(typeof Peer==="undefined")return fail("Couldn’t load the connection library. Check your internet.");
+  peer=new Peer(PFX+code,PCFG);
+  try{if(navigator.wakeLock)navigator.wakeLock.request("screen").then(function(l){wl=l}).catch(function(){})}catch(e){}
+  peer.on("disconnected",function(){try{peer.reconnect()}catch(e){}});
+  peer.on("error",function(e){if(e.type==="unavailable-id")hostRoom();else fail("Connection problem ("+e.type+"). Try again.")});
+  peer.on("open",function(){
+    H={phase:"lobby",players:[{name:name||"Player",ready:false}],turn:0,letter:"a",words:[],err:"",errFor:0,checking:false,notice:"",winner:null,reason:"",deadline:0,tm:null};
+    bc();
+  });
+  peer.on("connection",function(c){
+    if(conn&&conn.open){c.on("open",function(){c.send({t:"full"});setTimeout(function(){c.close()},300)});return}
+    conn=c;
+    c.on("data",function(d){if(d.t==="join"){H.players[1]={name:clean(d.name),ready:false};bc()}else act(1,d)});
+    c.on("close",function(){
+      conn=null;if(!H)return;
+      if(H.phase==="play"){H.players.splice(1,1);H.phase="over";clearTimeout(H.tm);H.winner=0;H.reason="left the game";H.players[0].ready=false}
+      else H.players.splice(1,1);
+      bc();
+    });
+  });
+}
+function joinRoom(c){
+  teardown();isHost=false;myIdx=1;code=c;S=null;view="room";msg="Joining room…";render();
+  if(typeof Peer==="undefined")return fail("Couldn’t load the connection library. Check your internet.");
+  peer=new Peer(PCFG);
+  var t=setTimeout(function(){if(!S)fail("Couldn’t connect to the room. Make sure the host still has the game open on screen, then try again.")},25000);
+  msg="Contacting server…";render();
+  peer.on("error",function(e){clearTimeout(t);fail(e.type==="peer-unavailable"?"Room not found. Check the code, and ask the host to keep the game page open (don’t switch apps).":"Connection problem ("+e.type+"). Try again.")});
+  peer.on("open",function(){
+    msg="Room found, connecting…";render();conn=peer.connect(PFX+c,{reliable:true});
+    conn.on("open",function(){conn.send({t:"join",name:name||"Player"})});
+    conn.on("data",function(d){
+      if(d.t==="full"){clearTimeout(t);fail("This room is full.");return}
+      if(d.players){clearTimeout(t);setState(d)}
+    });
+    conn.on("close",function(){if(view==="room")fail("The host left the room.")});
+  });
+}
+
+/* ---------- host game logic ---------- */
+function bc(){
+  if(!isHost||!H)return;
+  var d={phase:H.phase,players:H.players,turn:H.turn,letter:H.letter,words:H.words,err:H.err,errFor:H.errFor,checking:H.checking,notice:H.notice,winner:H.winner,reason:H.reason,secs:H.phase==="play"?Math.max(0,(H.deadline-Date.now())/1000):0};
+  setState(d);
+  if(conn&&conn.open)conn.send(d);
+}
+function arm(){clearTimeout(H.tm);H.deadline=Date.now()+TURN*1000;H.tm=setTimeout(function(){if(H&&H.phase==="play")finish(H.turn,"ran out of time")},TURN*1000+400)}
+function start(){
+  H.phase="play";H.words=[];H.err="";H.notice="";H.checking=false;H.winner=null;
+  H.turn=Math.floor(Math.random()*2);H.letter=LETTERS[Math.floor(Math.random()*LETTERS.length)];
+  H.players.forEach(function(p){p.ready=false});arm();
+}
+function finish(loser,reason){
+  clearTimeout(H.tm);H.phase="over";H.checking=false;H.winner=1-loser;H.reason=reason;
+  H.players.forEach(function(p){p.ready=false});bc();
+}
+async function validate(w){
+  try{
+    var ctl=new AbortController(),t=setTimeout(function(){ctl.abort()},5000);
+    var r=await fetch("https://api.dictionaryapi.dev/api/v2/entries/en/"+w,{signal:ctl.signal});
+    clearTimeout(t);
+    if(r.status===200)return {ok:true};
+    if(r.status===404)return {ok:false};
+    return {ok:true,skip:true};
+  }catch(e){return {ok:true,skip:true}}
+}
+async function act(i,d){
+  if(!H)return;
+  if(d.t==="ready"&&H.phase!=="play"){
+    H.players[i].ready=!H.players[i].ready;
+    if(H.players.length===2&&H.players.every(function(p){return p.ready}))start();
+    bc();return;
+  }
+  if(d.t==="word"&&H.phase==="play"&&H.turn===i&&!H.checking){
+    var w=String(d.w||"").trim().toLowerCase(),bad=null;
+    if(!/^[a-z]{2,30}$/.test(w))bad="Use letters only, at least 2 letters.";
+    else if(w[0]!==H.letter)bad="Word must start with “"+H.letter.toUpperCase()+"”.";
+    else if(H.words.indexOf(w)>=0)bad="That word was already used.";
+    if(bad){H.err=bad;H.errFor=i;bc();return}
+    H.checking=true;H.err="";bc();
+    var v=await validate(w);
+    if(!H||H.phase!=="play")return;
+    H.checking=false;
+    if(!v.ok){H.err="“"+w+"” isn’t a real word. Try another!";H.errFor=i;bc();return}
+    H.words.push(w);H.err="";H.notice=v.skip?"Dictionary check unavailable, so words aren’t verified.":"";
+    H.letter=w[w.length-1];H.turn=1-H.turn;arm();bc();
+  }
+}
+document.addEventListener("visibilitychange",function(){
+  if(document.visibilityState==="visible"&&peer&&peer.disconnected&&!peer.destroyed){try{peer.reconnect()}catch(e){}}
+  if(document.visibilityState==="visible"&&isHost&&navigator.wakeLock){try{navigator.wakeLock.request("screen").then(function(l){wl=l}).catch(function(){})}catch(e){}}
+});
+render();
+})();
+</script>
+</body>
+</html>
